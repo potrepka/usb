@@ -36,20 +36,13 @@ Download and run the installer.
 
 ## Building and Running
 
-To clone this repository:
-
-```bash
-git clone https://github.com/potrepka/usb.git
-cd usb
-```
-
-To build and run:
+Use Cargo to build and run the application.
 
 ```bash
 cargo run
 ```
 
-For an optimized build:
+For an optimized build, use the `--release` flag.
 
 ```bash
 cargo run --release
