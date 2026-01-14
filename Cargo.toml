@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 ctrlc = "3.4"
-rusb = "0.9"
+futures-lite = "2.5"
+nusb = "0.2"
