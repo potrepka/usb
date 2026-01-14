@@ -36,6 +36,15 @@ Download and run the installer.
 
 ## Building and Running
 
+To clone this repository:
+
+```bash
+git clone https://github.com/potrepka/usb.git
+cd usb
+```
+
+To build and run:
+
 ```bash
 cargo run
 ```
@@ -50,12 +59,6 @@ cargo run --release
 
 USB device access may require elevated privileges.
 
-**macOS:**
-```bash
-sudo cargo run
-```
-
-**Linux:**
 ```bash
 sudo cargo run
 ```
