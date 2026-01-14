@@ -5,11 +5,13 @@ mod input;
 mod message;
 
 use device::DeviceEntry;
-use endpoint::Endpoint;
+use endpoint::{Endpoint, TransferType};
 use error::{Error, Result};
 use input::prompt_selection;
 use message::print_message;
-use rusb::{Context, DeviceHandle, UsbContext};
+use nusb::descriptors::ConfigurationDescriptor;
+use nusb::transfer::{Bulk, In, Interrupt, TransferError};
+use nusb::{Interface, MaybeFuture};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -24,13 +26,11 @@ fn main() {
 }
 
 fn run() -> Result<()> {
-    let context = Context::new()?;
-    let mut entries: Vec<DeviceEntry> = context
-        .devices()?
-        .iter()
-        .filter_map(DeviceEntry::from_device)
+    let mut entries: Vec<DeviceEntry> = nusb::list_devices()
+        .wait()?
+        .map(DeviceEntry::from_info)
         .collect();
-    entries.sort_by_key(|e| e.sort_key());
+    entries.sort_by_key(|e: &DeviceEntry| e.sort_key());
     if entries.is_empty() {
         return Err(Error::NoDevices);
     }
@@ -39,40 +39,30 @@ fn run() -> Result<()> {
         println!("[{}] {}\n", i + 1, entry);
     }
     let device = &entries[prompt_selection("Select device", entries.len()).ok_or(Error::UserCancelled)?];
-    let num_configs = device.num_configurations();
-    if num_configs == 0 {
-        return Err(Error::NoConfigurations);
-    }
-    let active_config = device.active_config_value();
-    println!("\nAvailable configurations:\n");
-    let mut configs = Vec::with_capacity(num_configs as usize);
-    for i in 0..num_configs {
-        match device.config_descriptor(i) {
-            Ok(config) => {
-                let config_value = config.number();
-                let is_active = active_config == Some(config_value);
-                let active_marker = if is_active { " (active)" } else { "" };
-                println!(
-                    "[{}] Configuration {}{} - {} interface(s), max {}mA",
-                    i + 1,
-                    config_value,
-                    active_marker,
-                    config.num_interfaces(),
-                    u16::from(config.max_power()) * 2,
-                );
-                configs.push(config);
-            }
-            Err(e) => {
-                eprintln!("[{}] Unknown - Error: {}", i + 1, e);
-            }
-        }
-    }
+    let opened = device.open()?;
+    let configs: Vec<ConfigurationDescriptor> = opened.configurations().collect();
     if configs.is_empty() {
         return Err(Error::NoConfigurations);
     }
+    println!("\nAvailable configurations:\n");
+    let active_config = opened.active_configuration().ok();
+    let active_value = active_config.as_ref().map(|c: &ConfigurationDescriptor| c.configuration_value());
+    for (i, config) in configs.iter().enumerate() {
+        let config_value = config.configuration_value();
+        let is_active = active_value == Some(config_value);
+        let active_marker = if is_active { " (active)" } else { "" };
+        println!(
+            "[{}] Configuration {}{} - {} interface(s), max {}mA",
+            i + 1,
+            config_value,
+            active_marker,
+            config.num_interfaces(),
+            config.max_power(),
+        );
+    }
     println!();
     let config = &configs[prompt_selection("Select configuration", configs.len()).ok_or(Error::UserCancelled)?];
-    let config_value = config.number();
+    let config_value = config.configuration_value();
     let endpoints = Endpoint::collect_in_endpoints(config);
     if endpoints.is_empty() {
         return Err(Error::NoEndpoints);
@@ -83,11 +73,12 @@ fn run() -> Result<()> {
     }
     println!();
     let endpoint = &endpoints[prompt_selection("Select endpoint", endpoints.len()).ok_or(Error::UserCancelled)?];
-    let handle = device.open_and_claim(config_value, endpoint.interface())?;
-    read_loop(&handle, endpoint)
+    drop(opened);
+    let (_device, interface) = device.open_and_claim(config_value, endpoint.interface(), endpoint.setting())?;
+    read_loop(&interface, endpoint)
 }
 
-fn read_loop(handle: &DeviceHandle<Context>, endpoint: &Endpoint) -> Result<()> {
+fn read_loop(interface: &Interface, endpoint: &Endpoint) -> Result<()> {
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
     ctrlc::set_handler(move || {
@@ -97,20 +88,40 @@ fn read_loop(handle: &DeviceHandle<Context>, endpoint: &Endpoint) -> Result<()> 
         "\nListening on endpoint 0x{:02X} (Ctrl+C to exit)...\n",
         endpoint.address(),
     );
-    let mut buf = [0u8; BUFFER_SIZE];
     let timeout = Duration::from_millis(READ_TIMEOUT_MS);
+    match endpoint.transfer_type() {
+        TransferType::Bulk => {
+            let mut ep = interface.endpoint::<Bulk, In>(endpoint.address())?;
+            read_loop_impl(&mut ep, &running, timeout)
+        }
+        TransferType::Interrupt => {
+            let mut ep = interface.endpoint::<Interrupt, In>(endpoint.address())?;
+            read_loop_impl(&mut ep, &running, timeout)
+        }
+    }
+}
+
+fn read_loop_impl<T: nusb::transfer::BulkOrInterrupt>(
+    ep: &mut nusb::Endpoint<T, In>,
+    running: &Arc<AtomicBool>,
+    timeout: Duration,
+) -> Result<()> {
     let mut result = Ok(());
     while running.load(Ordering::SeqCst) {
-        match endpoint.read(handle, &mut buf, timeout) {
-            Ok(len) => print_message(&buf[..len]),
-            Err(Error::Usb(rusb::Error::Timeout)) => continue,
+        let buf = ep.allocate(BUFFER_SIZE);
+        let completion = ep.transfer_blocking(buf, timeout);
+        match completion.status {
+            Ok(()) => print_message(&completion.buffer[..completion.actual_len]),
+            Err(TransferError::Cancelled) => break,
+            Err(TransferError::Stall) => {
+                ep.clear_halt().wait()?;
+            }
             Err(e) => {
-                result = Err(e);
+                result = Err(Error::Transfer(e));
                 break;
             }
         }
     }
     println!("\nShutting down...");
-    let _ = handle.release_interface(endpoint.interface());
     result
 }

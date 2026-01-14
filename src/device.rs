@@ -1,106 +1,66 @@
 use crate::error::{Error, Result};
-use rusb::{ConfigDescriptor, Context, Device, DeviceDescriptor, DeviceHandle};
+use nusb::descriptors::ConfigurationDescriptor;
+use nusb::{Device, DeviceInfo, Interface, MaybeFuture};
 
 pub struct DeviceEntry {
-    device: Device<Context>,
-    descriptor: DeviceDescriptor,
-    manufacturer: Option<String>,
-    product: Option<String>,
-    serial: Option<String>,
+    info: DeviceInfo,
 }
 
 impl DeviceEntry {
-    pub fn from_device(device: Device<Context>) -> Option<Self> {
-        let descriptor = device.device_descriptor().ok()?;
-        let (manufacturer, product, serial) = Self::fetch_strings(&device, &descriptor);
-        Some(Self {
-            device,
-            descriptor,
-            manufacturer,
-            product,
-            serial,
-        })
+    pub fn from_info(info: DeviceInfo) -> Self {
+        Self { info }
     }
-    fn fetch_strings(
-        device: &Device<Context>,
-        descriptor: &DeviceDescriptor,
-    ) -> (Option<String>, Option<String>, Option<String>) {
-        let handle = match device.open() {
-            Ok(h) => h,
-            Err(_) => return (None, None, None),
-        };
-        let manufacturer = descriptor
-            .manufacturer_string_index()
-            .and_then(|i| handle.read_string_descriptor_ascii(i).ok());
-        let product = descriptor
-            .product_string_index()
-            .and_then(|i| handle.read_string_descriptor_ascii(i).ok());
-        let serial = descriptor
-            .serial_number_string_index()
-            .and_then(|i| handle.read_string_descriptor_ascii(i).ok());
-        (manufacturer, product, serial)
-    }
-    pub fn sort_key(&self) -> (u16, u16, u8, u8) {
+    pub fn sort_key(&self) -> (u16, u16, u8) {
         (
-            self.descriptor.vendor_id(),
-            self.descriptor.product_id(),
-            self.device.bus_number(),
-            self.device.address(),
+            self.info.vendor_id(),
+            self.info.product_id(),
+            self.info.device_address(),
         )
     }
     pub fn vendor_id(&self) -> u16 {
-        self.descriptor.vendor_id()
+        self.info.vendor_id()
     }
     pub fn product_id(&self) -> u16 {
-        self.descriptor.product_id()
+        self.info.product_id()
     }
-    pub fn bus_number(&self) -> u8 {
-        self.device.bus_number()
-    }
-    pub fn address(&self) -> u8 {
-        self.device.address()
+    pub fn device_address(&self) -> u8 {
+        self.info.device_address()
     }
     pub fn class_code(&self) -> u8 {
-        self.descriptor.class_code()
+        self.info.class()
     }
     pub fn sub_class_code(&self) -> u8 {
-        self.descriptor.sub_class_code()
+        self.info.subclass()
     }
     pub fn protocol_code(&self) -> u8 {
-        self.descriptor.protocol_code()
+        self.info.protocol()
     }
     pub fn manufacturer_str(&self) -> &str {
-        self.manufacturer.as_deref().unwrap_or("Unknown")
+        self.info.manufacturer_string().unwrap_or("Unknown")
     }
     pub fn product_str(&self) -> &str {
-        self.product.as_deref().unwrap_or("Unknown")
+        self.info.product_string().unwrap_or("Unknown")
     }
     pub fn serial(&self) -> Option<&str> {
-        self.serial.as_deref()
+        self.info.serial_number()
     }
-    pub fn num_configurations(&self) -> u8 {
-        self.descriptor.num_configurations()
+    pub fn bus_id(&self) -> &str {
+        self.info.bus_id()
     }
-    pub fn config_descriptor(&self, index: u8) -> Result<ConfigDescriptor> {
-        self.device.config_descriptor(index).map_err(Error::from)
+    pub fn open(&self) -> Result<Device> {
+        self.info.open().wait().map_err(Error::from)
     }
-    pub fn active_config_value(&self) -> Option<u8> {
-        self.device
-            .open()
-            .ok()
-            .and_then(|h| h.active_configuration().ok())
-    }
-    pub fn open_and_claim(&self, config_value: u8, interface: u8) -> Result<DeviceHandle<Context>> {
-        let handle = self.device.open()?;
-        if handle.kernel_driver_active(interface).unwrap_or(false) {
-            handle.detach_kernel_driver(interface)?;
+    pub fn open_and_claim(&self, config_value: u8, interface_num: u8, alt_setting: u8) -> Result<(Device, Interface)> {
+        let device = self.info.open().wait()?;
+        let active = device.active_configuration().ok().map(|c: ConfigurationDescriptor| c.configuration_value());
+        if active != Some(config_value) {
+            device.set_configuration(config_value).wait()?;
         }
-        let current_config = handle.active_configuration().ok();
-        if current_config != Some(config_value) {
-            handle.set_active_configuration(config_value)?;
+        let interface = device.detach_and_claim_interface(interface_num).wait()?;
+        if alt_setting != 0 {
+            interface.set_alt_setting(alt_setting).wait()?;
         }
-        handle.claim_interface(interface)?;
-        Ok(handle)
+        Ok((device, interface))
     }
 }
 
@@ -109,8 +69,8 @@ impl std::fmt::Display for DeviceEntry {
         writeln!(f, "{} - {}", self.manufacturer_str(), self.product_str())?;
         writeln!(f, "    Vendor ID:  0x{:04X}", self.vendor_id())?;
         writeln!(f, "    Product ID: 0x{:04X}", self.product_id())?;
-        writeln!(f, "    Bus:        {}", self.bus_number())?;
-        writeln!(f, "    Address:    {}", self.address())?;
+        writeln!(f, "    Bus:        {}", self.bus_id())?;
+        writeln!(f, "    Address:    {}", self.device_address())?;
         writeln!(f, "    Class:      0x{:02X}", self.class_code())?;
         writeln!(f, "    Subclass:   0x{:02X}", self.sub_class_code())?;
         write!(f, "    Protocol:   0x{:02X}", self.protocol_code())?;

@@ -10,6 +10,9 @@ pub fn prompt_selection(prompt: &str, max: usize) -> Option<usize> {
         if io::stdin().read_line(&mut input).is_err() {
             return None;
         }
+        if input.is_empty() {
+            return None;
+        }
         if let Ok(n) = input.trim().parse::<usize>() {
             if n >= 1 && n <= max {
                 return Some(n - 1);

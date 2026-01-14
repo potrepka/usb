@@ -1,6 +1,6 @@
 # USB Device Listener
 
-A Rust command-line application for connecting to USB devices and monitoring incoming data. Lists all USB devices, allows selection of configuration and endpoint, then displays received data in hexadecimal, decimal, and ASCII formats.
+A Rust command-line application for connecting to USB devices and monitoring incoming data. Lists all USB devices, allows selection of configuration and endpoint, and displays received data in hexadecimal, decimal, and ASCII formats.
 
 ## Features
 
@@ -19,10 +19,7 @@ This application supports reading from endpoints with the following transfer typ
 
 ## Prerequisites
 
-The following prerequisites are required:
-
 - Cargo 1.85+ (for Rust 2024 Edition support)
-- libusb 1.0+ (automatically downloaded and built)
 
 ### Installing Cargo
 
@@ -36,30 +33,6 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 **Windows:**
 
 Download and run the installer.
-
-### Installing libusb
-
-In most cases, the project will build without manually installing libusb. If you encounter build errors related to libusb, install the development files:
-
-**macOS:**
-```bash
-brew install libusb
-```
-
-**Ubuntu/Debian:**
-```bash
-sudo apt install libusb-1.0-0-dev
-```
-
-**Fedora:**
-```bash
-sudo dnf install libusb1-devel
-```
-
-**Arch Linux:**
-```bash
-sudo pacman -S libusb
-```
 
 ## Building and Running
 
@@ -123,25 +96,17 @@ This application only lists IN endpoints since it monitors incoming data.
 
 ## Troubleshooting
 
-### "USB error: Access denied"
-
-Run with elevated privileges (`sudo`).
-
-### "USB error: Entity not found"
-
-The device may not have an active configuration. The application handles this by letting you select and activate a configuration.
-
-### "USB error: Resource busy"
+### "USB error: could not open interface for exclusive access"
 
 Another application or kernel driver is using the device. The application attempts to detach kernel drivers automatically, but some devices may require manually unloading drivers.
-
-### "No configurations found on this device"
-
-All configuration descriptors failed to load. This may indicate a device communication problem or an unsupported device.
 
 ### "No IN endpoints found on this device"
 
 The selected configuration has no input endpoints. Try a different configuration if available, or the device may only support output operations.
+
+### "No configurations found on this device"
+
+All configuration descriptors failed to load. This may indicate a device communication problem or an unsupported device.
 
 ### Device not appearing in list
 
