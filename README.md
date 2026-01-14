@@ -1,6 +1,6 @@
 # USB Device Listener
 
-A Rust command-line application for connecting to USB devices and monitoring incoming data. Lists all USB devices, allows selection of configuration and endpoint, and displays received data in hexadecimal, decimal, and ASCII formats.
+USB Device Listener is a Rust command-line application for connecting to USB devices and monitoring incoming data. The application lists all connected USB devices, allows selection of configuration and endpoint, and displays received data in hexadecimal, decimal, and ASCII formats.
 
 ## Features
 
